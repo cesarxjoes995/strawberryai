@@ -386,28 +386,62 @@ function App() {
     });
   };
 
+  // Clerk appearance object (can be moved to a shared file or defined here if specific to App.tsx)
   const clerkModalAppearance = {
-    baseTheme: undefined, 
+    baseTheme: undefined, // Or your specific theme if you have one (e.g., dark)
     variables: {
-      colorPrimary: '#a855f7', 
-      colorText: '#ffffff',
+      colorPrimary: '#a855f7', // purple-500
+      colorText: '#ffffff', // Ensure global text is white
       colorBackground: '#141414',
       colorInputBackground: '#1A1A1A',
-      colorInputText: '#ffffff',
+      colorInputText: '#ffffff', // Ensure input text is white
       borderRadius: '0.75rem',
     },
     elements: {
-        card: { backgroundColor: '#141414', border: '1px solid #232323', boxShadow: 'none' },
+        card: { backgroundColor: '#14141A', border: '1px solid #232323', boxShadow: 'none' },
         headerTitle: { color: '#ffffff' },
-        headerSubtitle: { color: '#a1a1aa' },
-        socialButtonsBlockButton: { borderColor: '#232323', backgroundColor: '#1A1A1A', '&:hover': { backgroundColor: '#232323' } },
+        headerSubtitle: { color: '#a1a1aa' }, // gray-400
+        socialButtonsBlockButton: { 
+          borderColor: '#232323', 
+          backgroundColor: '#1A1A1A', 
+          '&:hover': { backgroundColor: '#232323' },
+          color: '#ffffff' // Ensure text on social buttons is light
+        },
         dividerLine: { backgroundColor: '#232323' },
-        dividerText: { color: '#a1a1aa' },
-        formFieldLabel: { color: '#e5e7eb' },
-        formFieldInput: { backgroundColor: '#1A1A1A', borderColor: '#232323', color: '#ffffff', '&:focus': { borderColor: '#a855f7' } },
-        formButtonPrimary: { backgroundImage: 'linear-gradient(to right, #a855f7, #ec4899)', '&:hover': { backgroundImage: 'linear-gradient(to right, #9333ea, #db2777)' } },
-        footerActionText: { color: '#a1a1aa' },
-        footerActionLink: { color: '#a855f7', '&:hover': { color: '#9333ea' } }
+        dividerText: { color: '#a1a1aa' }, // gray-400
+        formFieldLabel: { color: '#e5e7eb' }, // gray-200
+        formFieldInput: { 
+          backgroundColor: '#1A1A1A', 
+          borderColor: '#232323', 
+          color: '#ffffff', 
+          '&:focus': { borderColor: '#a855f7' } 
+        },
+        formButtonPrimary: { 
+          backgroundImage: 'linear-gradient(to right, #a855f7, #ec4899)', 
+          '&:hover': { backgroundImage: 'linear-gradient(to right, #9333ea, #db2777)' },
+          color: '#ffffff' // Ensure text on primary buttons is light
+        },
+        footerActionText: { color: '#a1a1aa' }, // gray-400
+        footerActionLink: { color: '#a855f7', '&:hover': { color: '#9333ea' } }, // purple-500
+
+        // UserButton specific text colors
+        userButtonPopoverCard: {
+          backgroundColor: '#14141A', // Match card background
+          border: '1px solid #232323',
+        },
+        userButtonPopoverActionButtonText: {
+          color: '#e5e7eb' // gray-200 for "Manage Account", "Sign Out"
+        },
+        userButtonPopoverActionButtonIcon: {
+          color: '#a1a1aa' // gray-400 for icons next to actions
+        },
+        userButtonPopoverFooterText: { // For "Secured by Clerk"
+          color: '#a1a1aa' // gray-400
+        },
+         // Fallback for any other text within Clerk components if not specifically targeted
+        colorTextSecondary: {
+          color: '#a1a1aa' // gray-400
+        }
     }
   };
 
