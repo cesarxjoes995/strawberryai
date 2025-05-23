@@ -9,6 +9,10 @@ interface ChatResponse {
 
 const SAMURAI_API_ENDPOINT = 'https://newapi-9qln.onrender.com/';
 const SAMURAI_API_KEY = 'Samurai-AP1-Fr33';
+// New Samurai v2 endpoint - will use the Netlify function in production
+const SAMURAI_V2_API_ENDPOINT = process.env.NODE_ENV === 'production' 
+  ? '/api/samurai-v2' 
+  : 'http://localhost:8888/.netlify/functions/samurai-v2';
 
 // Proxy URLs to hide API endpoints
 const PROXY_URLS = {
@@ -66,6 +70,11 @@ export async function sendChatMessage(
   onChunk?: (chunk: string, isDone: boolean) => void // Callback for streaming updates
 ): Promise<ChatResponse> {
   try {
+    // Special handling for Samurai Ai v2
+    if (model === 'Samurai Ai v2') {
+      return await sendSamuraiV2Message(messages, signal, onChunk);
+    }
+    
     let apiUrl: string;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -229,5 +238,71 @@ export async function sendChatMessage(
       ? error.message 
       : 'Failed to get response from AI. Please try again.';
     return { content: '', error: errorMessage };
+  }
+}
+
+// New function to handle Samurai Ai v2 requests via our Netlify function
+async function sendSamuraiV2Message(
+  messages: Message[],
+  signal?: AbortSignal,
+  onChunk?: (chunk: string, isDone: boolean) => void
+): Promise<ChatResponse> {
+  try {
+    const response = await fetch(SAMURAI_V2_API_ENDPOINT, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        messages: messages.map(msg => ({
+          role: msg.role,
+          content: msg.content,
+          id: Math.random().toString(36).substring(2, 9) // Generate a random ID similar to the Blackbox format
+        }))
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({}));
+      const errorMessage = errorData.error || errorData.details || `Failed to get response (${response.status}) from Samurai Ai v2`;
+      console.error('Samurai V2 API error:', errorData);
+      throw new Error(errorMessage);
+    }
+
+    const data = await response.json();
+    
+    // If there's a streaming callback, simulate streaming with the full response
+    if (onChunk && data.response && data.response.choices && data.response.choices[0] && data.response.choices[0].message) {
+      const content = data.response.choices[0].message.content;
+      
+      // Simple simulation of streaming by sending chunks of text with delays
+      // In a real implementation, the Netlify function would handle the streaming
+      const chunkSize = 5; // characters
+      for (let i = 0; i < content.length; i += chunkSize) {
+        const chunk = content.substring(i, i + chunkSize);
+        onChunk(chunk, false);
+        // Small delay to simulate streaming
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      onChunk('', true); // Signal stream completion
+      return { content: '' }; // Content delivered via onChunk
+    }
+    
+    // Non-streaming response
+    if (data.response && data.response.choices && data.response.choices[0] && data.response.choices[0].message) {
+      return { content: data.response.choices[0].message.content };
+    } else {
+      console.error('Invalid Samurai V2 API response:', data);
+      throw new Error('Invalid response format from Samurai Ai v2 API');
+    }
+
+  } catch (error: any) {
+    console.error('Samurai V2 error:', error);
+    if (onChunk) onChunk('', true); // Ensure isDone is called on error for cleanup
+    if (error.name === 'AbortError') {
+      return { content: '', error: 'Request was cancelled' };
+    }
+    return { content: '', error: error.message || 'Failed to get response from Samurai Ai v2. Please try again.' };
   }
 }
