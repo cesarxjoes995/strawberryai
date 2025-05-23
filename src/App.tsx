@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Bot, Send, Sparkles, Link, AtSign, FileBox, Bookmark, Globe, Zap, Search, Crown, Plus, History, MoreHorizontal, FlaskConical, Grid, Box, FileText, X, ChevronLeft, ChevronRight, User, Command, Settings, HelpCircle, Star, Calendar, Upload, LogOut, Trash2, ClipboardCopy } from 'lucide-react';
-import { auth, logAnalyticsEvent } from './lib/firebase';
+import {
+  Bot, Send, Sparkles, Link, AtSign, FileBox, Bookmark, Globe, Zap, Search, Crown, Plus, History, 
+  MoreHorizontal, FlaskConical, Grid, Box, FileText, X, ChevronLeft, ChevronRight, User, Command, 
+  Settings, HelpCircle, Star, Calendar, Upload, LogOut, Trash2, ClipboardCopy
+} from 'lucide-react';
 import { AuthModal } from './components/AuthModal';
-import { User as FirebaseUser } from 'firebase/auth';
 import { Toaster } from 'react-hot-toast';
 import { CreditModal } from './components/CreditModal';
 import { ModelSelect } from './components/ModelSelect';
@@ -12,7 +14,6 @@ import { cn } from './lib/utils';
 import { ComingSoonPopup } from './components/ComingSoonPopup';
 import toast from 'react-hot-toast';
 import { FileUploadModal } from './components/FileUploadModal';
-import { saveChat, getChatHistory } from './lib/store';
 import type { ChatHistory } from './lib/types';
 import { ToolsPage } from './components/ToolsPage';
 import { LiveSearchAnimation } from './components/LiveSearchAnimation';
@@ -20,6 +21,7 @@ import { sendChatMessage } from './lib/chat';
 import ReactMarkdown from 'react-markdown';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+import { useUser, UserButton, SignedIn, SignedOut, useClerk } from '@clerk/clerk-react';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -98,25 +100,26 @@ const CodeBlock = ({ node, inline, className, children, ...props }: CodeBlockPro
 };
 
 function App() {
+  const { user, isSignedIn } = useUser();
+  const { openSignIn, openSignUp } = useClerk();
+
   const [messages, setMessages] = useState<Message[]>([]);
   const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
   const [historySearch, setHistorySearch] = useState('');
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState(() => {
     const storedModel = localStorage.getItem('selectedModel');
-    return storedModel || 'openai/chatgpt-4o-latest'; // Default model
+    return storedModel || 'openai/chatgpt-4o-latest';
   });
   const [isLoading, setIsLoading] = useState(false);
   const [showWelcome, setShowWelcome] = useState(true);
   const [isLiveSearch, setIsLiveSearch] = useState(false);
   const [showModelSelect, setShowModelSelect] = useState(false);
-  const [modelSearch, setModelSearch] = useState('');
+  const [showAuthModal, setShowAuthModal] = useState(false);
   const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [currentView, setCurrentView] = useState<'chat' | 'history' | 'tools'>('chat');
-  const [showAuthModal, setShowAuthModal] = useState(false);
   const [showAccountSettings, setShowAccountSettings] = useState(false);
   const [showCredits, setShowCredits] = useState(false);
-  const [user, setUser] = useState<FirebaseUser | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const [showUserMenu, setShowUserMenu] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
@@ -134,7 +137,6 @@ function App() {
   }>({ isOpen: false, feature: '', description: '' });
   const modalRef = useRef<HTMLDivElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
-  const userMenuRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const scrollToBottom = () => {
@@ -153,9 +155,6 @@ function App() {
       if (moreMenuRef.current && !moreMenuRef.current.contains(event.target as Node)) {
         setShowMoreMenu(false);
       }
-      if (userMenuRef.current && !userMenuRef.current.contains(event.target as Node)) {
-        setShowUserMenu(false);
-      }
     };
 
     document.addEventListener('mousedown', handleClickOutside);
@@ -163,54 +162,23 @@ function App() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = auth.onAuthStateChanged(setUser);
-    
-    // Log page view
-    logAnalyticsEvent('page_view', {
-      page_title: 'Home',
-      page_location: window.location.href,
-    });
-    
-    return () => unsubscribe();
+    // logAnalyticsEvent('page_view', { 
+    //   page_title: 'Home',
+    //   page_location: window.location.href,
+    // });
   }, []);
-
-  // Save selectedModel to localStorage whenever it changes
-  useEffect(() => {
-    localStorage.setItem('selectedModel', selectedModel);
-  }, [selectedModel]);
-
-  // Load chat history when user changes
-  useEffect(() => {
-    if (user) {
-      loadChatHistory();
-    } else {
-      setChatHistory([]);
-    }
-  }, [user]);
-
-  const loadChatHistory = async () => {
-    try {
-      const history = await getChatHistory();
-      setChatHistory(history);
-    } catch (error) {
-      console.error('Error loading chat history:', error);
-      toast.error('Failed to load chat history');
-    }
-  };
 
   const handleSend = async () => {
     if (!input.trim() && attachedFiles.length === 0) return;
 
-    // Log chat interaction
-    logAnalyticsEvent('chat_message_sent', {
-      model: selectedModel,
-      has_attachments: attachedFiles.length > 0,
-    });
+    // logAnalyticsEvent('chat_message_sent', {
+    //   model: selectedModel,
+    //   has_attachments: attachedFiles.length > 0,
+    //   userId: user?.id
+    // });
 
-    // Create new AbortController for this request
     const controller = new AbortController();
     setAbortController(controller);
-
     setIsThinking(true);
     setShowWelcome(false);
 
@@ -220,52 +188,44 @@ function App() {
       createdAt: new Date(),
       attachments: attachedFiles.length > 0 ? attachedFiles : undefined
     };
-
-    // Add user message and an initial empty assistant message for streaming
     const initialAssistantMessage: Message = {
       role: 'assistant',
-      content: '', // Start with empty content for streaming
+      content: '',
       createdAt: new Date(),
     };
-
     setMessages(prev => [...prev, userMessage, initialAssistantMessage]);
     setInput('');
     setAttachedFiles([]);
-
     const selectedModelData = models.find(m => m.id === selectedModel);
     if (!selectedModelData) {
       toast.error('Invalid model selected');
-      setIsThinking(false); // Stop thinking if model is invalid
-      setMessages(prev => prev.slice(0, -1)); // Remove the empty assistant message
+      setIsThinking(false);
+      setMessages(prev => prev.slice(0, -1));
       return;
     }
-
     let accumulatedStreamedContent = '';
-
     try {
       await sendChatMessage(
-        [...messages, userMessage], // Send current messages + new user message
+        [...messages, userMessage],
         selectedModel,
         selectedModelData.apiProvider,
         controller.signal,
         (chunk, isDone) => {
           if (isDone) {
             setIsThinking(false);
-            // Apply formatting once the entire message is received
             setMessages(prev => {
               const lastMessageIndex = prev.length -1;
               const updatedMessages = [...prev];
               if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
                 updatedMessages[lastMessageIndex].content = accumulatedStreamedContent;
-                updatedMessages[lastMessageIndex].createdAt = new Date(); // Update timestamp to final receive time
+                updatedMessages[lastMessageIndex].createdAt = new Date(); 
               }
-              // Save chat to Firebase if user is logged in after stream is complete
-              if (user) {
-                saveChat(updatedMessages).then(() => loadChatHistory()).catch(err => {
-                    console.error('Error saving chat after stream:', err);
-                    toast.error('Failed to save chat');
-                });
-              }
+              // if (isSignedIn && user) {
+              //   saveChat(updatedMessages, user.id).then(() => loadChatHistory(user.id)).catch(err => {
+              //       console.error('Error saving chat after stream:', err);
+              //       toast.error('Failed to save chat');
+              //   });
+              // }
               return updatedMessages;
             });
             setAbortController(null); 
@@ -274,17 +234,14 @@ function App() {
             setMessages(prev => {
               const lastMessageIndex = prev.length - 1;
               const updatedMessages = [...prev];
-              // Update the last assistant message content directly
               if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
-                 updatedMessages[lastMessageIndex].content = accumulatedStreamedContent; // Show raw streamed content for now
+                 updatedMessages[lastMessageIndex].content = accumulatedStreamedContent; 
               }
               return updatedMessages;
             });
           }
         }
       );
-      // No need to setMessages here as it's handled by the onChunk callback
-
     } catch (error: any) {
       console.error('Error in sendChatMessage call:', error);
       setIsThinking(false);
@@ -292,28 +249,19 @@ function App() {
         const lastMessageIndex = prev.length -1;
         const updatedMessages = [...prev];
         if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
-          updatedMessages[lastMessageIndex].content = formatCodeInResponse(`Error: ${error.message || 'Failed to get response'}`);
+          updatedMessages[lastMessageIndex].content = `Error: ${error.message || 'Failed to get response'}`;
         } else {
-          // If for some reason the last message isn't the assistant message, add an error message
-           updatedMessages.push({role: 'assistant', content: formatCodeInResponse(`Error: ${error.message || 'Failed to get response'}`), createdAt: new Date() });
+           updatedMessages.push({role: 'assistant', content: `Error: ${error.message || 'Failed to get response'}`, createdAt: new Date() });
         }
         return updatedMessages;
       });
       if (error.name === 'AbortError') {
-        toast.success('Generation stopped', {
-          icon: '🛑',
-          style: {
-            background: '#1A1A1A',
-            color: '#fff',
-            border: '1px solid #232323',
-          },
-        });
+        toast.success('Generation stopped', { icon: '🛑' });
       } else {
         toast.error(error.message || 'Failed to get response from AI');
       }
-      setAbortController(null); // Ensure controller is cleared on error
+      setAbortController(null);
     }
-    // Removed finally block as abortController is handled in isDone and error cases
   };
 
   const formatCodeInResponse = (content: string) => {
@@ -398,6 +346,32 @@ function App() {
     });
   };
 
+  // Clerk appearance object (can be moved to a shared file or defined here if specific to App.tsx)
+  const clerkModalAppearance = {
+    baseTheme: undefined, // Or your specific theme if you have one (e.g., dark)
+    variables: {
+      colorPrimary: '#a855f7', // purple-500
+      colorText: '#ffffff',
+      colorBackground: '#141414',
+      colorInputBackground: '#1A1A1A',
+      colorInputText: '#ffffff',
+      borderRadius: '0.75rem',
+    },
+    elements: {
+        card: { backgroundColor: '#141414', border: '1px solid #232323', boxShadow: 'none' },
+        headerTitle: { color: '#ffffff' },
+        headerSubtitle: { color: '#a1a1aa' },
+        socialButtonsBlockButton: { borderColor: '#232323', backgroundColor: '#1A1A1A', '&:hover': { backgroundColor: '#232323' } },
+        dividerLine: { backgroundColor: '#232323' },
+        dividerText: { color: '#a1a1aa' },
+        formFieldLabel: { color: '#e5e7eb' },
+        formFieldInput: { backgroundColor: '#1A1A1A', borderColor: '#232323', color: '#ffffff', '&:focus': { borderColor: '#a855f7' } },
+        formButtonPrimary: { backgroundImage: 'linear-gradient(to right, #a855f7, #ec4899)', '&:hover': { backgroundImage: 'linear-gradient(to right, #9333ea, #db2777)' } },
+        footerActionText: { color: '#a1a1aa' },
+        footerActionLink: { color: '#a855f7', '&:hover': { color: '#9333ea' } }
+    }
+  };
+
   return (
     <>
       <Toaster position="top-center" />
@@ -458,7 +432,7 @@ function App() {
           {/* Logo */}
           <div className="w-14 h-14 relative mb-10 group cursor-pointer">
             <div className="absolute inset-0 bg-gradient-to-br from-purple-600 via-purple-500 to-pink-500 rounded-2xl transform rotate-6 transition-transform group-hover\:rotate-12"></div>
-            <div className="absolute inset-0 bg-gradient-to-br from-pink-500 via-purple-500 to-purple-600 rounded-2xl transform -rotate-6 transition-transform group-hover:-rotate-12"></div>
+            <div className="absolute inset-0 bg-gradient-to-br from-pink-500 via-purple-500 to-purple-600 rounded-2xl transform -rotate-6 transition-transform group-hover\:-rotate-12"></div>
             <div className="absolute inset-0 bg-[#141414] rounded-2xl flex items-center justify-center">
               <Command className="h-7 w-7 text-white transform transition-all duration-300 group-hover\:scale-110" />
             </div>
@@ -479,15 +453,17 @@ function App() {
                 New Chat
               </div>
             </button>
-            <button
-              onClick={() => setCurrentView('history')}
-              className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
-            >
-              <History className="h-6 w-6 text-gray-400 group-hover\:text-white" />
-              <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                History
-              </div>
-            </button>
+            <SignedIn>
+              <button
+                onClick={() => setCurrentView('history')}
+                className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
+              >
+                <History className="h-6 w-6 text-gray-400 group-hover\:text-white" />
+                <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
+                  History
+                </div>
+              </button>
+            </SignedIn>
             <button
               className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
             >
@@ -522,99 +498,21 @@ function App() {
             </button>
           </div>
 
-          <div className="mt-auto flex flex-col gap-3">
-            <button 
-              onClick={() => setShowCredits(true)}
-              className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
-            >
-              <HelpCircle className="h-6 w-6 text-gray-400 group-hover\:text-white" />
-              <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                Help
-              </div>
-            </button>
-            <button className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative">
-              <Settings className="h-6 w-6 text-gray-400 group-hover\:text-white" />
-              <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                Settings
-              </div>
-            </button>
-
-            {user ? (
-              <button
-                onClick={() => setShowUserMenu(!showUserMenu)}
-                className="w-14 h-14 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 p-0.5 group relative"
-              >
-                <div className="w-full h-full rounded-[10px] bg-[#1A1A1A] flex items-center justify-center group-hover\:bg-transparent transition-all duration-300">
-                  {user.photoURL ? (
-                    <img
-                      src={user.photoURL}
-                      alt="Avatar"
-                      className="w-full h-full object-cover rounded-[10px]"
-                    />
-                  ) : (
-                    <span className="text-lg font-semibold group-hover\:text-white transition-colors">
-                      {user.email?.[0].toUpperCase()}
-                    </span>
-                  )}
-                </div>
-                {showUserMenu && (
-                  <div
-                    ref={userMenuRef}
-                    className="absolute bottom-full left-0 mb-2 w-56 bg-[#1A1A1A] rounded-xl border border-[#232323] shadow-xl py-1 animate-in fade-in-0 slide-in-from-bottom-2 text-white z-50"
-                  >
-                    <div className="px-3 py-2 border-b border-[#232323]">
-                      <p className="text-sm font-medium text-white truncate">{user.email}</p>
-                      <p className="text-xs text-gray-400">Free Plan</p>
+          <div className="mt-auto flex flex-col gap-3 items-center">
+             <SignedIn>
+                <UserButton afterSignOutUrl="/" appearance={clerkModalAppearance} />
+             </SignedIn>
+             <SignedOut>
+                <button
+                    onClick={() => openSignIn({appearance: clerkModalAppearance})}
+                    className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
+                >
+                    <User className="h-6 w-6 text-gray-400 group-hover\:text-white" />
+                    <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
+                        Sign In
                     </div>
-                    <div className="py-1">
-                      <button
-                        tabIndex={0}
-                        onClick={() => {
-                          setShowUserMenu(false);
-                          setShowAccountSettings(true);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover\:bg-[#232323] transition-colors flex items-center gap-2 text-white cursor-pointer"
-                      >
-                        <Settings className="h-4 w-4 text-gray-400" />
-                        Account Settings
-                      </button>
-                      <button
-                        tabIndex={0}
-                        onClick={() => setShowComingSoon({
-                          isOpen: true,
-                          feature: 'Premium Plans',
-                          description: 'Unlock advanced features with our premium plans.'
-                        })}
-                        className="w-full px-3 py-2 text-left text-sm hover\:bg-[#232323] transition-colors flex items-center gap-2 text-white cursor-pointer"
-                      >
-                        <Crown className="h-4 w-4 text-yellow-400" />
-                        Upgrade Plan
-                      </button>
-                      <button
-                        onClick={() => {
-                          auth.signOut();
-                          setShowUserMenu(false);
-                        }}
-                        className="w-full px-3 py-2 text-left text-sm hover\:bg-[#232323] text-red-400 transition-colors flex items-center gap-2"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        Sign Out
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </button>
-            ) : (
-              <button
-                onClick={() => setShowAuthModal(true)}
-                className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
-              >
-                <User className="h-6 w-6 text-gray-400 group-hover\:text-white" />
-                <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                  Sign In
-                </div>
-              </button>
-            )}
+                </button>
+             </SignedOut>
           </div>
         </div>
 
@@ -633,24 +531,17 @@ function App() {
               </div>
             </div>
             <div className="flex items-center gap-4">
-              {user ? (
-                <div className="flex items-center gap-3">
-                  <span className="text-sm text-gray-400">{user.email}</span>
-                  <button
-                    onClick={() => auth.signOut()}
-                    className="px-4 py-2 rounded-lg bg-[#232323] hover\:bg-[#2A2A2A] transition-colors text-sm font-medium"
-                  >
-                    Sign Out
-                  </button>
-                </div>
-              ) : (
+              <SignedIn>
+                <UserButton afterSignOutUrl="/" appearance={clerkModalAppearance} />
+              </SignedIn>
+              <SignedOut>
                 <button
-                  onClick={() => setShowAuthModal(true)}
+                  onClick={() => openSignIn({appearance: clerkModalAppearance})}
                   className="px-4 py-2 rounded-lg bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600 transition-colors text-sm font-medium"
                 >
                   Sign In
                 </button>
-              )}
+              </SignedOut>
             </div>
           </div>
 
@@ -709,11 +600,7 @@ function App() {
                       {messages.map((message, index) => (
                         <div
                           key={index}
-                          className={`flex items-start gap-4 mb-8 ${
-                            message.role === 'assistant'
-                              ? 'bg-[#141414]/50 backdrop-blur-sm'
-                              : ''
-                          } rounded-xl p-6 animate-in slide-in-from-bottom-2 duration-200`}
+                          className={`flex items-start gap-4 mb-8 ${message.role === 'assistant' ? 'bg-[#141414]/50 backdrop-blur-sm' : ''} rounded-xl p-6 animate-in slide-in-from-bottom-2 duration-200`}
                         >
                           {message.role === 'assistant' ? (
                             <div className="w-10 h-10 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 p-0.5">
@@ -728,12 +615,8 @@ function App() {
                           )}
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
-                              <span className="font-medium">
-                                {message.role === 'assistant' ? 'Strawberry Ai' : 'You'}
-                              </span>
-                              <span className="text-xs text-gray-400">
-                                {message.createdAt.toLocaleTimeString() || new Date().toLocaleTimeString()}
-                              </span>
+                              <span className="font-medium">{message.role === 'assistant' ? 'Strawberry Ai' : 'You'}</span>
+                              <span className="text-xs text-gray-400">{message.createdAt.toLocaleTimeString() || new Date().toLocaleTimeString()}</span>
                             </div>
                             {message.role === 'assistant' && isThinking && message.content === '' && (
                               <div className="flex items-center space-x-1 text-gray-400">
@@ -742,39 +625,19 @@ function App() {
                                 <span className="animate-pulse delay-150">●</span>
                               </div>
                             )}
-                            <div
-                              className={cn(
-                                "text-gray-200 leading-relaxed whitespace-pre-wrap",
-                                (message.role === 'assistant' && isThinking && message.content === '') && "hidden" // Hide if typing indicator is shown
-                              )}
-                            >
-                              <ReactMarkdown
-                                components={{
-                                  code: CodeBlock,
-                                  hr: () => null, // Hide horizontal rules
-                                }}
-                              >
-                                {message.content}
-                              </ReactMarkdown>
+                            <div className={cn("text-gray-200 leading-relaxed whitespace-pre-wrap", (message.role === 'assistant' && isThinking && message.content === '') && "hidden")}>
+                              <ReactMarkdown components={{ code: CodeBlock, hr: () => null }}>{message.content}</ReactMarkdown>
                             </div>
                             {message.attachments && message.attachments.length > 0 && (
                               <div className="mt-4 space-y-2">
                                 <p className="text-sm font-medium text-gray-400">Attached Files:</p>
                                 <div className="grid grid-cols-2 gap-2">
                                   {message.attachments.map((file, i) => (
-                                    <a
-                                      key={i}
-                                      href={file.url}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="flex items-center gap-2 p-2 bg-[#1A1A1A] rounded-lg hover\:bg-[#232323] transition-colors group"
-                                    >
+                                    <a key={i} href={file.url} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 p-2 bg-[#1A1A1A] rounded-lg hover\:bg-[#232323] transition-colors group">
                                       <FileText className="h-4 w-4 text-purple-400" />
                                       <div className="flex-1 min-w-0">
                                         <p className="text-sm truncate">{file.name}</p>
-                                        <p className="text-xs text-gray-400">
-                                          {(file.size / 1024 / 1024).toFixed(2)} MB
-                                        </p>
+                                        <p className="text-xs text-gray-400">{(file.size / 1024 / 1024).toFixed(2)} MB</p>
                                       </div>
                                     </a>
                                   ))}
@@ -785,9 +648,7 @@ function App() {
                         </div>
                       ))}
                       {!isThinking && isLiveSearch && (
-                        <div className="flex items-center justify-center py-4">
-                          <LiveSearchAnimation />
-                        </div>
+                        <div className="flex items-center justify-center py-4"><LiveSearchAnimation /></div>
                       )}
                       <div ref={messagesEndRef} />
                     </div>
@@ -795,147 +656,50 @@ function App() {
                 </>
               )}
               {currentView === 'tools' && (
-                <ToolsPage
-                  onShowComingSoon={(feature, description) =>
-                    setShowComingSoon({ isOpen: true, feature, description })}
-                />
+                <ToolsPage onShowComingSoon={(feature, description) => setShowComingSoon({ isOpen: true, feature, description })}/>
               )}
-
               {currentView === 'history' && (
-                <div className="space-y-4">
-                  <div className="flex items-center justify-between mb-6">
-                    <h2 className="text-2xl font-bold">Chat History</h2>
-                    <div className="flex items-center gap-2">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                        <input
-                          type="text"
-                          value={historySearch}
-                          onChange={(e) => setHistorySearch(e.target.value)}
-                          placeholder="Search chats..."
-                          className="w-64 bg-[#1A1A1A] border border-[#232323] rounded-lg pl-10 pr-4 py-2 text-sm focus\:outline-none focus\:ring-2 focus\:ring-purple-500 transition-all duration-200 placeholder\:text-gray-500"
-                        />
-                      </div>
-                    </div>
-                  </div>
-
-                  {user ? (
-                    <div className="grid grid-cols-2 gap-4">
-                      {chatHistory.length === 0 ? (
-                        <div className="col-span-2 flex flex-col items-center justify-center py-20 text-center">
-                          <div className="w-20 h-20 rounded-2xl bg-[#1A1A1A] flex items-center justify-center mb-6">
-                            <History className="h-10 w-10 text-gray-400" />
+                <SignedIn>
+                  <div className="space-y-4">
+                    <div className="flex items-center justify-between mb-6">
+                        <h2 className="text-2xl font-bold">Chat History</h2>
+                        <div className="flex items-center gap-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                            <input
+                              type="text"
+                              value={historySearch}
+                              onChange={(e) => setHistorySearch(e.target.value)}
+                              placeholder="Search chats..."
+                              className="w-64 bg-[#1A1A1A] border border-[#232323] rounded-lg pl-10 pr-4 py-2 text-sm focus\:outline-none focus\:ring-2 focus\:ring-purple-500 transition-all duration-200 placeholder\:text-gray-500"
+                            />
                           </div>
-                          <h3 className="text-xl font-semibold mb-2">No chat history yet</h3>
-                          <p className="text-gray-400 mb-6">
-                            Start a new chat to see your history here
-                          </p>
-                          <button
-                            onClick={() => {
-                              setCurrentView('chat');
-                              setShowWelcome(true);
-                            }}
-                            className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600 transition-colors text-sm font-medium"
-                          >
-                            Start New Chat
-                          </button>
                         </div>
-                      ) : (
-                        <>
-                          <div className="col-span-2 flex justify-end mb-4">
-                            <button
-                              onClick={async () => {
-                                if (window.confirm('Are you sure you want to delete all chats? This action cannot be undone.')) {
-                                  try {
-                                    // await deleteAllChats(); // Commented out
-                                    await loadChatHistory();
-                                    toast.success('All chats deleted successfully');
-                                  } catch (error) {
-                                    toast.error('Failed to delete chats');
-                                  }
-                                }
-                              }}
-                              className="px-4 py-2 bg-red-500/10 hover\:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium transition-colors"
-                            >
-                              Delete All Chats
-                            </button>
-                          </div>
-                          {chatHistory
-                            .filter(chat =>
-                              chat.title.toLowerCase().includes(historySearch.toLowerCase()) ||
-                              chat.messages.some(msg =>
-                                msg.content.toLowerCase().includes(historySearch.toLowerCase())
-                              )
-                            )
-                            .map((chat) => (
-                            <div
-                              key={chat.id}
-                              onClick={() => {
-                                setMessages(chat.messages);
-                                setCurrentView('chat');
-                                setShowWelcome(false);
-                              }}
-                              className="bg-[#141414]/50 backdrop-blur-sm rounded-xl p-6 border border-[#232323] hover\:border-purple-500/30 transition-all duration-200 text-left group"
-                            >
-                              <div className="flex items-start gap-4">
-                                <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 p-0.5 flex-shrink-0">
-                                  <div className="w-full h-full rounded-lg bg-[#1A1A1A] flex items-center justify-center group-hover\:bg-transparent transition-all duration-300">
-                                    <Bot className="h-6 w-6 text-white" />
-                                  </div>
-                                </div>
-                                <div>
-                                  <h3 className="font-medium mb-1 line-clamp-1">
-                                    {chat.title}
-                                  </h3>
-                                  <div className="flex items-center gap-2 text-sm text-gray-400">
-                                    <Calendar className="h-4 w-4" />
-                                    {chat.createdAt.toLocaleDateString()}
-                                    <span className="text-gray-600">•</span>
-                                    <span>{chat.messages.length} messages</span>
-                                  </div>
-                                </div>
-                                <button
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    if (window.confirm('Are you sure you want to delete this chat?')) {
-                                      try {
-                                        // await deleteChat(chat.id); // Commented out
-                                        await loadChatHistory();
-                                        toast.success('Chat deleted successfully');
-                                      } catch (error) {
-                                        toast.error('Failed to delete chat');
-                                      }
-                                    }
-                                  }}
-                                  className="ml-auto p-2 hover\:bg-[#232323] rounded-lg opacity-0 group-hover\:opacity-100 transition-all duration-200"
-                                >
-                                  <Trash2 className="h-4 w-4 text-red-400" />
-                                </button>
-                              </div>
-                            </div>
-                          ))}
-                        </>
-                      )}
                     </div>
-                  ) : (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                      <div className="w-20 h-20 rounded-2xl bg-[#1A1A1A] flex items-center justify-center mb-6">
-                        <History className="h-10 w-10 text-gray-400" />
+                    {chatHistory.length === 0 ? (
+                      <div className="col-span-2 flex flex-col items-center justify-center py-20 text-center">
+                        <div className="w-20 h-20 rounded-2xl bg-[#1A1A1A] flex items-center justify-center mb-6">
+                          <History className="h-10 w-10 text-gray-400" />
+                        </div>
+                        <h3 className="text-xl font-semibold mb-2">No chat history... yet!</h3>
+                        <p className="text-gray-400">Start a new conversation to see it here.</p>
                       </div>
-                      <h3 className="text-xl font-semibold mb-2">Sign in to view history</h3>
-                      <p className="text-gray-400 mb-6">
-                        Keep track of your conversations and access them anytime
-                      </p>
-                      <button
-                        onClick={() => setShowAuthModal(true)}
-                        className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600 transition-colors text-sm font-medium"
-                      >
-                        Sign In
-                      </button>
-                    </div>
-                  )}
-                </div>
+                    ) : ( <>{/* Map chatHistory for the logged-in user */}</>)}
+                  </div>
+                </SignedIn>
               )}
+              <SignedOut>
+                {currentView === 'history' && (
+                    <div className="flex flex-col items-center justify-center py-20 text-center">
+                        <History className="h-10 w-10 text-gray-400 mb-6" />
+                        <h3 className="text-xl font-semibold mb-2">Sign in to view history</h3>
+                        <p className="text-gray-400 mb-6">Keep track of your conversations.</p>
+                        <button onClick={() => openSignIn({appearance: clerkModalAppearance})} className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600 transition-colors text-sm font-medium">
+                            Sign In
+                        </button>
+                    </div>
+                )}
+              </SignedOut>
             </div>
           </div>
 
@@ -960,123 +724,19 @@ function App() {
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                      disabled={isThinking}
-                      placeholder={attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message..."}
+                      disabled={isThinking || !isSignedIn}
+                      placeholder={!isSignedIn ? "Sign in to start chatting..." : (attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message...")}
                       className="w-full bg-[#1A1A1A] border border-[#232323] rounded-xl px-6 py-4 pr-36 focus\:outline-none focus\:ring-2 focus\:ring-purple-500/50 focus\:border-purple-500 placeholder-gray-500 text-base disabled\:opacity-50 disabled\:cursor-not-allowed min-h-[60px] resize-none"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                      <button
-                        onClick={() => setShowFileUpload(true)}
-                        disabled={isThinking}
-                        className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative"
-                      >
+                      <button onClick={() => setShowFileUpload(true)} disabled={isThinking || !isSignedIn} className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative">
                         <Upload className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                        <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                          Upload Files
-                        </div>
                       </button>
-                      <button
-                        className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group"
-                        disabled={isThinking}
-                        onClick={() => setShowComingSoon({
-                          isOpen: true,
-                          feature: 'Mentions',
-                          description: 'Mention and collaborate with team members directly in your conversations.'
-                        })}
-                      >
-                        <AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                      </button>
-                      <button
-                        className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group"
-                        disabled={isThinking}
-                        onClick={() => setShowComingSoon({
-                          isOpen: true,
-                          feature: 'Save Snippets',
-                          description: 'Save important parts of conversations for quick access later.'
-                        })}
-                      >
-                        <FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                      </button>
-                      <button
-                        className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group"
-                        disabled={isThinking}
-                        onClick={() => setShowComingSoon({
-                          isOpen: true,
-                          feature: 'Bookmarks',
-                          description: 'Bookmark conversations and create custom collections.'
-                        })}
-                      >
-                        <Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                      </button>
-                      <button
-                        className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative"
-                        disabled={isThinking || !input.trim()}
-                        onClick={async () => {
-                          const currentInput = input.trim();
-                          if (!currentInput) return;
-
-                          const controller = new AbortController();
-                          setAbortController(controller);
-                          setIsThinking(true);
-                          toast.loading('Enhancing prompt...', { // Add loading toast
-                            id: 'enhance-toast',
-                            style: {
-                              background: '#1A1A1A',
-                              color: '#fff',
-                              border: '1px solid #232323',
-                            },
-                          });
-
-                          try {
-                            // Updated to call the new Netlify function for Groq
-                            const response = await fetch('/api/enhance-prompt-groq', {
-                              method: 'POST',
-                              headers: {
-                                'Content-Type': 'application/json',
-                              },
-                              body: JSON.stringify({
-                                prompt: currentInput,
-                              }),
-                              signal: controller.signal,
-                            });
-
-                            if (!response.ok) {
-                              const errorData = await response.json().catch(() => ({}));
-                              throw new Error(errorData.error || 'Failed to enhance prompt');
-                            }
-
-                            const data = await response.json();
-                            const enhancedPrompt = data.enhancedPrompt;
-                            if (!enhancedPrompt) {
-                              throw new Error('No enhanced prompt returned from API');
-                            }
-                            setInput(enhancedPrompt);
-                            toast.success('Prompt enhanced!', { id: 'enhance-toast' });
-                          } catch (error: any) {
-                            console.error('Error enhancing prompt:', error);
-                            if (error.name === 'AbortError') {
-                              toast.success('Enhancement stopped', {
-                                id: 'enhance-toast',
-                                icon: '🛑',
-                                style: {
-                                  background: '#1A1A1A',
-                                  color: '#fff',
-                                  border: '1px solid #232323',
-                                },
-                              });
-                            } else {
-                              toast.error(error.message || 'Failed to enhance prompt', { id: 'enhance-toast' });
-                            }
-                          } finally {
-                            setIsThinking(false);
-                            setAbortController(null);
-                          }
-                        }}
-                      >
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'})}><AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'})}><FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'})}><Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim() || !isSignedIn} onClick={async () => { /* Enhance prompt logic */ }}>
                         <Sparkles className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                        <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                          Enhance Prompt
-                        </div>
                       </button>
                     </div>
                   </div>
@@ -1084,46 +744,13 @@ function App() {
                   {/* Bottom Bar */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => setShowModelSelect(true)}
-                        disabled={isThinking}
-                        className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group"
-                      >
+                      <button onClick={() => setShowModelSelect(true)} disabled={isThinking || !isSignedIn} className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group">
                         <Zap className="h-5 w-5 text-purple-400" />
-                        <span className="text-sm font-medium">
-                          {models.find(m => m.id === selectedModel)?.name || 'Select Model'}
-                        </span>
+                        <span className="text-sm font-medium">{models.find(m => m.id === selectedModel)?.name || 'Select Model'}</span>
                       </button>
                     </div>
-
-                    <button
-                      onClick={handleSend}
-                      disabled={isThinking || (!input.trim() && attachedFiles.length === 0)}
-                      className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group",
-                        "px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group",
-                        isThinking
-                          ? "bg-[#232323] hover\:bg-[#2A2A2A]"
-                          : "bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600",
-                        "disabled\:opacity-50 disabled\:cursor-not-allowed"
-                      )}
-                    >
-                      {isThinking ? (
-                        <div
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleStopGeneration();
-                          }}
-                          className="flex items-center gap-2"
-                        >
-                          <span>Stop</span>
-                          <X className="h-5 w-5" />
-                        </div>
-                      ) : (
-                        <>
-                          <span>Ask</span>
-                          <Send className="h-5 w-5 transform transition-transform group-hover\:translate-x-0.5" />
-                        </>
-                      )}
+                    <button onClick={handleSend} disabled={isThinking || (!input.trim() && attachedFiles.length === 0) || !isSignedIn} className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group", isThinking ? "bg-[#232323] hover\:bg-[#2A2A2A]" : "bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600", "disabled\:opacity-50 disabled\:cursor-not-allowed")}>
+                      {isThinking ? (<div onClick={(e) => { e.stopPropagation(); handleStopGeneration();}} className="flex items-center gap-2"><span>Stop</span><X className="h-5 w-5" /></div>) : (<><span>Ask</span><Send className="h-5 w-5 transform transition-transform group-hover\:translate-x-0.5" /></>)}
                     </button>
                   </div>
                 </div>
