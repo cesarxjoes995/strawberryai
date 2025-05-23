@@ -14,7 +14,6 @@ import { cn } from './lib/utils';
 import { ComingSoonPopup } from './components/ComingSoonPopup';
 import toast from 'react-hot-toast';
 import { FileUploadModal } from './components/FileUploadModal';
-import type { ChatHistory } from './lib/types';
 import { ToolsPage } from './components/ToolsPage';
 import { LiveSearchAnimation } from './components/LiveSearchAnimation';
 import { sendChatMessage } from './lib/chat';
@@ -22,6 +21,14 @@ import ReactMarkdown from 'react-markdown';
 import { PrismAsyncLight as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useUser, UserButton, SignedIn, SignedOut, useClerk } from '@clerk/clerk-react';
+import { 
+  getAllChatHistories, 
+  ChatHistoryItem, 
+  createNewChatSession, 
+  updateChatMessages,
+  deleteChatHistoryItem,
+  deleteAllChatHistories
+} from './lib/history';
 
 interface Message {
   role: 'user' | 'assistant';
@@ -104,7 +111,8 @@ function App() {
   const { openSignIn, openSignUp } = useClerk();
 
   const [messages, setMessages] = useState<Message[]>([]);
-  const [chatHistory, setChatHistory] = useState<ChatHistory[]>([]);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [currentChatId, setCurrentChatId] = useState<string | null>(null);
   const [historySearch, setHistorySearch] = useState('');
   const [input, setInput] = useState('');
   const [selectedModel, setSelectedModel] = useState(() => {
@@ -139,6 +147,14 @@ function App() {
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
+  useEffect(() => {
+    setChatHistory(getAllChatHistories());
+  }, []);
+  
+  useEffect(() => {
+    localStorage.setItem('selectedModel', selectedModel);
+  }, [selectedModel]);
+
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   };
@@ -161,30 +177,18 @@ function App() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  useEffect(() => {
-    // logAnalyticsEvent('page_view', { 
-    //   page_title: 'Home',
-    //   page_location: window.location.href,
-    // });
-  }, []);
-
   const handleSend = async () => {
     if (!input.trim() && attachedFiles.length === 0) return;
-
-    // logAnalyticsEvent('chat_message_sent', {
-    //   model: selectedModel,
-    //   has_attachments: attachedFiles.length > 0,
-    //   userId: user?.id
-    // });
 
     const controller = new AbortController();
     setAbortController(controller);
     setIsThinking(true);
     setShowWelcome(false);
 
+    const userMessageContent = input.trim();
     const userMessage: Message = {
       role: 'user',
-      content: input,
+      content: userMessageContent,
       createdAt: new Date(),
       attachments: attachedFiles.length > 0 ? attachedFiles : undefined
     };
@@ -193,7 +197,21 @@ function App() {
       content: '',
       createdAt: new Date(),
     };
-    setMessages(prev => [...prev, userMessage, initialAssistantMessage]);
+    
+    const updatedMessages = [...messages, userMessage, initialAssistantMessage];
+    setMessages(updatedMessages);
+
+    let activeChatId = currentChatId;
+    if (!activeChatId) {
+      const newSession = createNewChatSession(userMessageContent, updatedMessages);
+      activeChatId = newSession.id;
+      setCurrentChatId(activeChatId);
+      setChatHistory(prev => [newSession, ...prev.filter(h => h.id !== newSession.id)].sort((a,b) => b.updatedAt - a.updatedAt));
+    } else {
+      updateChatMessages(activeChatId, updatedMessages);
+      setChatHistory(prev => prev.map(h => h.id === activeChatId ? {...h, messages: updatedMessages, updatedAt: Date.now()} : h).sort((a,b) => b.updatedAt - a.updatedAt));
+    }
+
     setInput('');
     setAttachedFiles([]);
     const selectedModelData = models.find(m => m.id === selectedModel);
@@ -201,12 +219,14 @@ function App() {
       toast.error('Invalid model selected');
       setIsThinking(false);
       setMessages(prev => prev.slice(0, -1));
+      if (activeChatId) updateChatMessages(activeChatId, messages.concat(userMessage));
       return;
     }
+
     let accumulatedStreamedContent = '';
     try {
       await sendChatMessage(
-        [...messages, userMessage],
+        [userMessage],
         selectedModel,
         selectedModelData.apiProvider,
         controller.signal,
@@ -214,46 +234,35 @@ function App() {
           if (isDone) {
             setIsThinking(false);
             setMessages(prev => {
-              const lastMessageIndex = prev.length -1;
-              const updatedMessages = [...prev];
-              if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
-                updatedMessages[lastMessageIndex].content = accumulatedStreamedContent;
-                updatedMessages[lastMessageIndex].createdAt = new Date(); 
-              }
-              // if (isSignedIn && user) {
-              //   saveChat(updatedMessages, user.id).then(() => loadChatHistory(user.id)).catch(err => {
-              //       console.error('Error saving chat after stream:', err);
-              //       toast.error('Failed to save chat');
-              //   });
-              // }
-              return updatedMessages;
+              const finalMessages = prev.map((msg, index) => 
+                index === prev.length - 1 ? { ...msg, content: accumulatedStreamedContent, createdAt: new Date() } : msg
+              );
+              if (activeChatId) updateChatMessages(activeChatId, finalMessages);
+              setChatHistory(prevHist => prevHist.map(h => h.id === activeChatId ? {...h, messages: finalMessages, updatedAt: Date.now()} : h).sort((a,b) => b.updatedAt - a.updatedAt));
+              return finalMessages;
             });
             setAbortController(null); 
           } else {
             accumulatedStreamedContent += chunk;
-            setMessages(prev => {
-              const lastMessageIndex = prev.length - 1;
-              const updatedMessages = [...prev];
-              if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
-                 updatedMessages[lastMessageIndex].content = accumulatedStreamedContent; 
-              }
-              return updatedMessages;
-            });
+            setMessages(prev => 
+              prev.map((msg, index) => 
+                index === prev.length - 1 ? { ...msg, content: accumulatedStreamedContent } : msg
+              )
+            );
           }
         }
       );
     } catch (error: any) {
       console.error('Error in sendChatMessage call:', error);
       setIsThinking(false);
+      const errorContent = `Error: ${error.message || 'Failed to get response'}`;
       setMessages(prev => {
-        const lastMessageIndex = prev.length -1;
-        const updatedMessages = [...prev];
-        if(updatedMessages[lastMessageIndex] && updatedMessages[lastMessageIndex].role === 'assistant'){
-          updatedMessages[lastMessageIndex].content = `Error: ${error.message || 'Failed to get response'}`;
-        } else {
-           updatedMessages.push({role: 'assistant', content: `Error: ${error.message || 'Failed to get response'}`, createdAt: new Date() });
-        }
-        return updatedMessages;
+        const finalErrorMessages = prev.map((msg, index) => 
+          index === prev.length - 1 ? { ...msg, content: errorContent, createdAt: new Date() } : msg
+        );
+        if (activeChatId) updateChatMessages(activeChatId, finalErrorMessages);
+         setChatHistory(prevHist => prevHist.map(h => h.id === activeChatId ? {...h, messages: finalErrorMessages, updatedAt: Date.now()} : h).sort((a,b) => b.updatedAt - a.updatedAt));
+        return finalErrorMessages;
       });
       if (error.name === 'AbortError') {
         toast.success('Generation stopped', { icon: '🛑' });
@@ -263,9 +272,42 @@ function App() {
       setAbortController(null);
     }
   };
+  
+  const handleStartNewChat = () => {
+    setMessages([]);
+    setCurrentChatId(null);
+    setShowWelcome(true);
+    setCurrentView('chat');
+  };
+
+  const loadChatFromHistory = (chatItem: ChatHistoryItem) => {
+    setMessages(chatItem.messages.map(m => ({...m, createdAt: new Date(m.createdAt)})));
+    setCurrentChatId(chatItem.id);
+    setShowWelcome(false);
+    setCurrentView('chat');
+  };
+  
+  const handleDeleteHistoryItem = (chatId: string) => {
+    if (window.confirm('Are you sure you want to delete this chat?')) {
+      deleteChatHistoryItem(chatId);
+      setChatHistory(prev => prev.filter(h => h.id !== chatId));
+      if (currentChatId === chatId) {
+        handleStartNewChat();
+      }
+      toast.success('Chat deleted.');
+    }
+  };
+
+  const handleDeleteAllHistory = () => {
+    if (window.confirm('Are you sure you want to delete ALL chat history? This cannot be undone.')) {
+      deleteAllChatHistories();
+      setChatHistory([]);
+      handleStartNewChat();
+      toast.success('All chat history deleted.');
+    }
+  };
 
   const formatCodeInResponse = (content: string) => {
-    // Replace Markdown-like syntax with HTML
     content = content.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
     content = content.replace(/\*(.+?)\*/g, '<em>$1</em>');
 
@@ -275,7 +317,6 @@ function App() {
         (_, lang, code) => {
           const formattedCode = code.trim();
           const language = lang || 'typescript';
-          // Use JSON.stringify for robust escaping of formattedCode in the onclick handler
           return `
             <pre class="code-block" data-language="${language}">
               <div class="language-badge">${language}</div>
@@ -301,7 +342,6 @@ function App() {
     return code
       .split('\n')
       .map(line => {
-        // Basic syntax highlighting
         return line
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;')
@@ -346,11 +386,10 @@ function App() {
     });
   };
 
-  // Clerk appearance object (can be moved to a shared file or defined here if specific to App.tsx)
   const clerkModalAppearance = {
-    baseTheme: undefined, // Or your specific theme if you have one (e.g., dark)
+    baseTheme: undefined, 
     variables: {
-      colorPrimary: '#a855f7', // purple-500
+      colorPrimary: '#a855f7', 
       colorText: '#ffffff',
       colorBackground: '#141414',
       colorInputBackground: '#1A1A1A',
@@ -383,13 +422,13 @@ function App() {
             border: 1px solid #232323;
             border-radius: 8px;
             padding: 16px;
-            padding-top: 36px; /* Add padding to top to avoid overlap with badge/button */
+            padding-top: 36px;
             overflow: auto;
           }
           .code-block .language-badge {
             position: absolute;
             top: 8px;
-            left: 8px; /* Moved to top-left */
+            left: 8px;
             background: #232323;
             color: #fff;
             padding: 2px 8px;
@@ -400,7 +439,7 @@ function App() {
           .code-block .copy-button {
             position: absolute;
             top: 8px;
-            right: 8px; /* Stays top-right */
+            right: 8px;
             background: #3b82f6;
             color: #fff;
             border: none;
@@ -427,9 +466,7 @@ function App() {
         `}
       </style>
       <div className="h-screen bg-gradient-to-b from-[#0A0A0A] to-[#1A1A1A] text-white flex overflow-hidden">
-        {/* Sidebar */}
         <div className="w-20 bg-[#141414]/80 backdrop-blur-xl border-r border-[#232323] flex flex-col items-center py-6 relative">
-          {/* Logo */}
           <div className="w-14 h-14 relative mb-10 group cursor-pointer">
             <div className="absolute inset-0 bg-gradient-to-br from-purple-600 via-purple-500 to-pink-500 rounded-2xl transform rotate-6 transition-transform group-hover\:rotate-12"></div>
             <div className="absolute inset-0 bg-gradient-to-br from-pink-500 via-purple-500 to-purple-600 rounded-2xl transform -rotate-6 transition-transform group-hover\:-rotate-12"></div>
@@ -438,14 +475,9 @@ function App() {
             </div>
           </div>
 
-          {/* Main Navigation */}
           <div className="flex flex-col items-center gap-3">
             <button
-              onClick={() => {
-                setCurrentView('chat');
-                setShowWelcome(true);
-                setMessages([]);
-              }}
+              onClick={handleStartNewChat}
               className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
             >
               <Plus className="h-6 w-6 text-gray-400 group-hover\:text-white" />
@@ -453,17 +485,15 @@ function App() {
                 New Chat
               </div>
             </button>
-            <SignedIn>
-              <button
-                onClick={() => setCurrentView('history')}
-                className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
-              >
-                <History className="h-6 w-6 text-gray-400 group-hover\:text-white" />
-                <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
-                  History
-                </div>
-              </button>
-            </SignedIn>
+            <button
+              onClick={() => setCurrentView('history')}
+              className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
+            >
+              <History className="h-6 w-6 text-gray-400 group-hover\:text-white" />
+              <div className="absolute left-full ml-3 px-3 py-1.5 bg-[#232323] rounded-lg text-sm opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
+                History
+              </div>
+            </button>
             <button
               className="w-14 h-14 rounded-xl bg-[#1A1A1A]/50 hover\:bg-[#232323] flex items-center justify-center transition-all duration-200 group relative"
             >
@@ -474,7 +504,6 @@ function App() {
             </button>
           </div>
 
-          {/* Tools Section */}
           <div className="mt-8 flex flex-col gap-3">
             <button
               onClick={() => setCurrentView('tools')}
@@ -516,9 +545,7 @@ function App() {
           </div>
         </div>
 
-        {/* Main Content */}
         <div className="flex-1 flex flex-col h-screen overflow-hidden">
-          {/* Header */}
           <div className="flex items-center justify-between px-8 py-6 bg-[#141414]/90 backdrop-blur-xl border-b border-[#232323] sticky top-0 z-20">
             <div className="flex items-center gap-4">
               <h1 className="text-2xl font-bold bg-gradient-to-r from-purple-400 via-pink-500 to-purple-600 text-transparent bg-clip-text">
@@ -545,7 +572,6 @@ function App() {
             </div>
           </div>
 
-          {/* Content Area */}
           <div 
             className="flex-1 overflow-y-auto px-8 py-6 relative scrollbar-thin scrollbar-thumb-pink-500 scrollbar-track-purple-800" 
             style={{ height: 'calc(100vh - 160px)' }}
@@ -555,7 +581,6 @@ function App() {
                 <>
                   {showWelcome ? (
                     <div className="h-full flex flex-col items-center justify-center">
-                      {/* Welcome Section */}
                       <div className="text-center">
                         <style>
                           {`
@@ -616,7 +641,7 @@ function App() {
                           <div className="flex-1">
                             <div className="flex items-center gap-2 mb-2">
                               <span className="font-medium">{message.role === 'assistant' ? 'Strawberry Ai' : 'You'}</span>
-                              <span className="text-xs text-gray-400">{message.createdAt.toLocaleTimeString() || new Date().toLocaleTimeString()}</span>
+                              <span className="text-xs text-gray-400">{new Date(message.createdAt).toLocaleTimeString()}</span>
                             </div>
                             {message.role === 'assistant' && isThinking && message.content === '' && (
                               <div className="flex items-center space-x-1 text-gray-400">
@@ -659,51 +684,83 @@ function App() {
                 <ToolsPage onShowComingSoon={(feature, description) => setShowComingSoon({ isOpen: true, feature, description })}/>
               )}
               {currentView === 'history' && (
-                <SignedIn>
-                  <div className="space-y-4">
-                    <div className="flex items-center justify-between mb-6">
-                        <h2 className="text-2xl font-bold">Chat History</h2>
-                        <div className="flex items-center gap-2">
-                          <div className="relative">
-                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                            <input
-                              type="text"
-                              value={historySearch}
-                              onChange={(e) => setHistorySearch(e.target.value)}
-                              placeholder="Search chats..."
-                              className="w-64 bg-[#1A1A1A] border border-[#232323] rounded-lg pl-10 pr-4 py-2 text-sm focus\:outline-none focus\:ring-2 focus\:ring-purple-500 transition-all duration-200 placeholder\:text-gray-500"
-                            />
+                <div className="space-y-4">
+                  <div className="flex items-center justify-between mb-6">
+                      <h2 className="text-2xl font-bold">Chat History</h2>
+                      <div className="flex items-center gap-2">
+                        <div className="relative">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
+                          <input
+                            type="text"
+                            value={historySearch}
+                            onChange={(e) => setHistorySearch(e.target.value)}
+                            placeholder="Search chats..."
+                            className="w-64 bg-[#1A1A1A] border border-[#232323] rounded-lg pl-10 pr-4 py-2 text-sm focus\:outline-none focus\:ring-2 focus\:ring-purple-500 transition-all duration-200 placeholder\:text-gray-500"
+                          />
+                        </div>
+                        <button 
+                          onClick={handleDeleteAllHistory}
+                          className="px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                        >
+                           <Trash2 size={16}/> Delete All
+                        </button>
+                      </div>
+                  </div>
+                  {chatHistory.filter(chat => chat.title.toLowerCase().includes(historySearch.toLowerCase()) || chat.messages.some(msg => msg.content.toLowerCase().includes(historySearch.toLowerCase()))).length === 0 ? (
+                    <div className="col-span-2 flex flex-col items-center justify-center py-20 text-center">
+                      <div className="w-20 h-20 rounded-2xl bg-[#1A1A1A] flex items-center justify-center mb-6">
+                        <History className="h-10 w-10 text-gray-400" />
+                      </div>
+                      <h3 className="text-xl font-semibold mb-2">No chat history... yet!</h3>
+                      <p className="text-gray-400">Start a new conversation to see it here, or try a different search.</p>
+                    </div>
+                  ) : ( 
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      {chatHistory
+                        .filter(chat => chat.title.toLowerCase().includes(historySearch.toLowerCase()) || chat.messages.some(msg => msg.content.toLowerCase().includes(historySearch.toLowerCase())))
+                        .map((chat) => (
+                        <div
+                          key={chat.id}
+                          onClick={() => loadChatFromHistory(chat)}
+                          className="bg-[#141414]/50 backdrop-blur-sm rounded-xl p-6 border border-[#232323] hover:border-purple-500/30 transition-all duration-200 text-left group cursor-pointer"
+                        >
+                          <div className="flex items-start gap-4">
+                            <div className="w-12 h-12 rounded-lg bg-gradient-to-br from-purple-500 to-pink-500 p-0.5 flex-shrink-0">
+                              <div className="w-full h-full rounded-lg bg-[#1A1A1A] flex items-center justify-center group-hover:bg-transparent transition-all duration-300">
+                                <Bot className="h-6 w-6 text-white" />
+                              </div>
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-medium mb-1 line-clamp-1 text-white">
+                                {chat.title}
+                              </h3>
+                              <div className="flex items-center gap-2 text-sm text-gray-400">
+                                <Calendar className="h-4 w-4" />
+                                {new Date(chat.updatedAt).toLocaleDateString()}
+                                <span className="text-gray-600"> • </span>
+                                <span>{chat.messages.length} messages</span>
+                              </div>
+                            </div>
+                            <button
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDeleteHistoryItem(chat.id);
+                              }}
+                              className="ml-auto p-2 hover:bg-[#232323] rounded-lg opacity-0 group-hover:opacity-100 transition-all duration-200"
+                              aria-label="Delete chat"
+                            >
+                              <Trash2 className="h-4 w-4 text-red-400" />
+                            </button>
                           </div>
                         </div>
+                      ))}
                     </div>
-                    {chatHistory.length === 0 ? (
-                      <div className="col-span-2 flex flex-col items-center justify-center py-20 text-center">
-                        <div className="w-20 h-20 rounded-2xl bg-[#1A1A1A] flex items-center justify-center mb-6">
-                          <History className="h-10 w-10 text-gray-400" />
-                        </div>
-                        <h3 className="text-xl font-semibold mb-2">No chat history... yet!</h3>
-                        <p className="text-gray-400">Start a new conversation to see it here.</p>
-                      </div>
-                    ) : ( <>{/* Map chatHistory for the logged-in user */}</>)}
-                  </div>
-                </SignedIn>
+                  )}
+                </div>
               )}
-              <SignedOut>
-                {currentView === 'history' && (
-                    <div className="flex flex-col items-center justify-center py-20 text-center">
-                        <History className="h-10 w-10 text-gray-400 mb-6" />
-                        <h3 className="text-xl font-semibold mb-2">Sign in to view history</h3>
-                        <p className="text-gray-400 mb-6">Keep track of your conversations.</p>
-                        <button onClick={() => openSignIn({appearance: clerkModalAppearance})} className="px-6 py-3 rounded-xl bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600 transition-colors text-sm font-medium">
-                            Sign In
-                        </button>
-                    </div>
-                )}
-              </SignedOut>
             </div>
           </div>
 
-          {/* Model Selection Modal */}
           <ModelSelect
             isOpen={showModelSelect}
             onClose={() => setShowModelSelect(false)}
@@ -712,36 +769,34 @@ function App() {
             isThinking={isThinking}
           />
 
-          {/* Input Bar */}
           {currentView === 'chat' && (
             <div className="sticky bottom-8 w-full max-w-4xl px-8 mx-auto">
               <div className="bg-[#141414]/80 backdrop-blur-xl rounded-2xl shadow-2xl border border-[#232323] p-6">
                 <div className="flex flex-col gap-4">
-                  {/* Input Area */}
                   <div className="relative">
                     <input
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
                       onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                      disabled={isThinking || !isSignedIn}
-                      placeholder={!isSignedIn ? "Sign in to start chatting..." : (attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message...")}
+                      disabled={isThinking}
+                      placeholder={attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message..."}
                       className="w-full bg-[#1A1A1A] border border-[#232323] rounded-xl px-6 py-4 pr-36 focus\:outline-none focus\:ring-2 focus\:ring-purple-500/50 focus\:border-purple-500 placeholder-gray-500 text-base disabled\:opacity-50 disabled\:cursor-not-allowed min-h-[60px] resize-none"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                      <button onClick={() => setShowFileUpload(true)} disabled={isThinking || !isSignedIn} className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative">
+                      <button onClick={() => setShowFileUpload(true)} disabled={isThinking} className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative">
                         <Upload className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
                       </button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'})}><AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'})}><FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'})}><Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim() || !isSignedIn} onClick={async () => {
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'})}><AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'})}><FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'})}><Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim()} onClick={async () => { 
                         const currentInput = input.trim();
                         if (!currentInput) return;
 
                         const controller = new AbortController();
                         setAbortController(controller);
-                        setIsThinking(true); // Use general isThinking or a specific one for enhancing
+                        setIsThinking(true); 
                         toast.loading('Enhancing prompt...', {
                           id: 'enhance-toast',
                           style: {
@@ -764,7 +819,7 @@ function App() {
                           });
 
                           if (!response.ok) {
-                            const errorData = await response.json().catch(() => ({})); // Try to parse error
+                            const errorData = await response.json().catch(() => ({})); 
                             throw new Error(errorData.error || errorData.details || 'Failed to enhance prompt');
                           }
 
@@ -774,7 +829,7 @@ function App() {
                           if (!enhancedPrompt) {
                             throw new Error('No enhanced prompt returned from API');
                           }
-                          setInput(enhancedPrompt); // Update the input field with the enhanced prompt
+                          setInput(enhancedPrompt); 
                           toast.success('Prompt enhanced!', { id: 'enhance-toast' });
                         } catch (error: any) {
                           console.error('Error enhancing prompt:', error);
@@ -790,7 +845,7 @@ function App() {
                           setIsThinking(false);
                           setAbortController(null);
                         }
-                      }}>
+                       }}>
                         <Sparkles className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
                          <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
                            Enhance Prompt
@@ -799,15 +854,14 @@ function App() {
                     </div>
                   </div>
 
-                  {/* Bottom Bar */}
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <button onClick={() => setShowModelSelect(true)} disabled={isThinking || !isSignedIn} className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group">
+                      <button onClick={() => setShowModelSelect(true)} disabled={isThinking} className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group">
                         <Zap className="h-5 w-5 text-purple-400" />
                         <span className="text-sm font-medium">{models.find(m => m.id === selectedModel)?.name || 'Select Model'}</span>
                       </button>
                     </div>
-                    <button onClick={handleSend} disabled={isThinking || (!input.trim() && attachedFiles.length === 0) || !isSignedIn} className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group", isThinking ? "bg-[#232323] hover\:bg-[#2A2A2A]" : "bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600", "disabled\:opacity-50 disabled\:cursor-not-allowed")}>
+                    <button onClick={handleSend} disabled={isThinking || (!input.trim() && attachedFiles.length === 0)} className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group", isThinking ? "bg-[#232323] hover\:bg-[#2A2A2A]" : "bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600", "disabled\:opacity-50 disabled\:cursor-not-allowed")}>
                       {isThinking ? (<div onClick={(e) => { e.stopPropagation(); handleStopGeneration();}} className="flex items-center gap-2"><span>Stop</span><X className="h-5 w-5" /></div>) : (<><span>Ask</span><Send className="h-5 w-5 transform transition-transform group-hover\:translate-x-0.5" /></>)}
                     </button>
                   </div>
