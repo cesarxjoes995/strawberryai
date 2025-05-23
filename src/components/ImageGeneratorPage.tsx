@@ -28,7 +28,8 @@ export function ImageGeneratorPage({ setActiveTool }: { setActiveTool: (tool: st
   const handleGenerate = async () => {
     if (!prompt.trim()) return;
     
-    const enhancedPrompt = `${prompt.trim()}, high quality, photorealistic, detailed, 8k uhd, professional photography, masterpiece`;
+    // Using the prompt as is without enhancements to work better with AmigcChat API
+    const promptToUse = prompt.trim();
     
     setIsGenerating(true);
     setError(null);
@@ -36,7 +37,7 @@ export function ImageGeneratorPage({ setActiveTool }: { setActiveTool: (tool: st
     setResults([]);
 
     try {
-      const imageBlob = await generateImage(enhancedPrompt);
+      const imageBlob = await generateImage(promptToUse);
       const dataUrl = await blobToDataUrl(imageBlob);
       setGeneratedImage(dataUrl);
       setResults(prev => [dataUrl, ...prev]);
