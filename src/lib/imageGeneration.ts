@@ -3,11 +3,11 @@ const AMIGOCHAT_API_URL = 'https://api.amigochat.io/v1/images/generations';
 const AMIGOCHAT_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIwNmUyMzExNC1jNTBiLTQzOTYtYTAwNS1jYzI4NGEyZTk0MDEiLCJpYXQiOjE3NDYxOTE3NDQsImV4cCI6MTc0ODc4Mzc0NH0.mSAy7_BiRpe5KnKDXG2TstQ7QA_o7cCQCZx2GaSJhjY';
 const DEVICE_UUID = '8d9ffae4-d504-40c1-adba-53abfcfa9923';
 
+// Using the exact chatId from the example to ensure compatibility
+const FIXED_CHAT_ID = '432f275e-76a4-294f-9ff3-a08ed1a3e56c';
+
 export async function generateImage(prompt: string): Promise<Blob> {
   try {
-    // Generate a random chat ID for each request
-    const chatId = generateRandomUUID();
-    
     const response = await fetch(AMIGOCHAT_API_URL, {
       method: 'POST',
       headers: {
@@ -22,7 +22,7 @@ export async function generateImage(prompt: string): Promise<Blob> {
         'x-device-version': '1.1.11',
       },
       body: JSON.stringify({
-        chatId: chatId,
+        chatId: FIXED_CHAT_ID,
         prompt: prompt,
         model: "recraft-v3",
         personaId: "image-generator"
@@ -31,10 +31,12 @@ export async function generateImage(prompt: string): Promise<Blob> {
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      console.error('API Error Response:', errorData);
       throw new Error(errorData.error?.message || 'Failed to generate image');
     }
 
     const data = await response.json();
+    console.log('API Success Response:', data);
     
     // Check if we have the image URL in the response
     if (!data.imageUrl) {
@@ -54,12 +56,12 @@ export async function generateImage(prompt: string): Promise<Blob> {
   }
 }
 
-// Helper to generate UUID
-function generateRandomUUID(): string {
-  return 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.replace(/[x]/g, function() {
-    return Math.floor(Math.random() * 16).toString(16);
-  });
-}
+// No longer needed as we're using a fixed chatId
+// function generateRandomUUID(): string {
+//   return 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx'.replace(/[x]/g, function() {
+//     return Math.floor(Math.random() * 16).toString(16);
+//   });
+// }
 
 export function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
