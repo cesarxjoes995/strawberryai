@@ -735,8 +735,66 @@ function App() {
                       <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'})}><AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
                       <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'})}><FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
                       <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'})}><Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim() || !isSignedIn} onClick={async () => { /* Enhance prompt logic */ }}>
+                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim() || !isSignedIn} onClick={async () => {
+                        const currentInput = input.trim();
+                        if (!currentInput) return;
+
+                        const controller = new AbortController();
+                        setAbortController(controller);
+                        setIsThinking(true); // Use general isThinking or a specific one for enhancing
+                        toast.loading('Enhancing prompt...', {
+                          id: 'enhance-toast',
+                          style: {
+                            background: '#1A1A1A',
+                            color: '#fff',
+                            border: '1px solid #232323',
+                          },
+                        });
+
+                        try {
+                          const response = await fetch('/api/enhance-prompt-groq', {
+                            method: 'POST',
+                            headers: {
+                              'Content-Type': 'application/json',
+                            },
+                            body: JSON.stringify({
+                              prompt: currentInput,
+                            }),
+                            signal: controller.signal,
+                          });
+
+                          if (!response.ok) {
+                            const errorData = await response.json().catch(() => ({})); // Try to parse error
+                            throw new Error(errorData.error || errorData.details || 'Failed to enhance prompt');
+                          }
+
+                          const data = await response.json();
+                          const enhancedPrompt = data.enhancedPrompt;
+
+                          if (!enhancedPrompt) {
+                            throw new Error('No enhanced prompt returned from API');
+                          }
+                          setInput(enhancedPrompt); // Update the input field with the enhanced prompt
+                          toast.success('Prompt enhanced!', { id: 'enhance-toast' });
+                        } catch (error: any) {
+                          console.error('Error enhancing prompt:', error);
+                          if (error.name === 'AbortError') {
+                            toast.success('Enhancement stopped', {
+                              id: 'enhance-toast',
+                              icon: '🛑',
+                            });
+                          } else {
+                            toast.error(error.message || 'Failed to enhance prompt', { id: 'enhance-toast' });
+                          }
+                        } finally {
+                          setIsThinking(false);
+                          setAbortController(null);
+                        }
+                      }}>
                         <Sparkles className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
+                         <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
+                           Enhance Prompt
+                         </div>
                       </button>
                     </div>
                   </div>
