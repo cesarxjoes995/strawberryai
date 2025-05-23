@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Image, Sparkles, Download, RefreshCw, X, Loader2, ChevronLeft, Info } from 'lucide-react';
 import { cn } from '../lib/utils';
 import toast from 'react-hot-toast';
+import { useUser, useClerk } from '@clerk/clerk-react';
 
 import { generateImage, blobToDataUrl } from '../lib/imageGeneration';
 
@@ -10,6 +11,9 @@ interface ImageGeneratorPageProps {
 }
 
 export function ImageGeneratorPage({ setActiveTool }: { setActiveTool: (tool: string | null) => void }) {
+  const { isSignedIn } = useUser();
+  const { openSignIn } = useClerk();
+
   const [isExiting, setIsExiting] = useState(false);
   const [prompt, setPrompt] = useState('');
   const [isGenerating, setIsGenerating] = useState(false);
@@ -26,9 +30,12 @@ export function ImageGeneratorPage({ setActiveTool }: { setActiveTool: (tool: st
   };
 
   const handleGenerate = async () => {
+    if (!isSignedIn) {
+      openSignIn();
+      return;
+    }
     if (!prompt.trim()) return;
     
-    // Using the prompt as is without enhancements to work better with AmigcChat API
     const promptToUse = prompt.trim();
     
     setIsGenerating(true);
@@ -99,21 +106,26 @@ export function ImageGeneratorPage({ setActiveTool }: { setActiveTool: (tool: st
             <div className="relative group">
               <div className="absolute -inset-0.5 bg-gradient-to-r from-purple-500 to-pink-500 rounded-xl blur opacity-30 group-hover:opacity-100 transition duration-1000 group-hover:duration-200"></div>
               <textarea
-                disabled={isGenerating}
+                disabled={isGenerating || !isSignedIn}
                 value={prompt}
                 onChange={(e) => setPrompt(e.target.value)}
-                placeholder="Describe your image in detail (e.g., 'A serene Japanese garden at sunset with cherry blossoms, a small wooden bridge over a koi pond, and traditional lanterns casting a warm glow')..."
+                onFocus={() => { if (!isSignedIn) openSignIn(); }}
+                placeholder={
+                  !isSignedIn 
+                    ? "Sign in to generate images..." 
+                    : "Describe your image in detail (e.g., 'A serene Japanese garden at sunset with cherry blossoms, a small wooden bridge over a koi pond, and traditional lanterns casting a warm glow')..."
+                }
                 className={cn(
                   "relative w-full bg-[#141414] border border-[#232323] rounded-xl px-6 py-4 min-h-[120px] focus:outline-none focus:ring-2 focus:ring-purple-500/50 transition-all duration-200 placeholder:text-gray-500 resize-none text-base",
-                  isGenerating && "opacity-50 cursor-not-allowed"
+                  (isGenerating || !prompt.trim() || !isSignedIn) && "opacity-50 cursor-not-allowed"
                 )}
               />
               <button
                 onClick={handleGenerate}
-                disabled={isGenerating || !prompt.trim()}
+                disabled={isGenerating || !prompt.trim() || !isSignedIn}
                 className={cn(
                   "absolute bottom-4 right-4 px-5 py-2.5 rounded-lg flex items-center gap-2 text-sm font-medium transition-all duration-200 hover:scale-105 active:scale-95",
-                  isGenerating || !prompt.trim()
+                  (isGenerating || !prompt.trim() || !isSignedIn)
                     ? "bg-[#232323] opacity-50 cursor-not-allowed"
                     : "bg-gradient-to-r from-purple-500 to-pink-500 hover:from-purple-600 hover:to-pink-600"
                 )}

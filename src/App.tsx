@@ -812,76 +812,87 @@ function App() {
                       type="text"
                       value={input}
                       onChange={(e) => setInput(e.target.value)}
-                      onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                      disabled={isThinking}
-                      placeholder={attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message..."}
+                      onFocus={() => { if (!isSignedIn) openSignIn({appearance: clerkModalAppearance}); }}
+                      onKeyPress={(e) => {
+                        if (!isSignedIn) {
+                          openSignIn({appearance: clerkModalAppearance});
+                          return;
+                        }
+                        if (e.key === 'Enter' && !isThinking) handleSend();
+                      }}
+                      disabled={isThinking || !isSignedIn}
+                      placeholder={!isSignedIn ? "Sign in to start chatting..." : (attachedFiles.length > 0 ? `${attachedFiles.length} file(s) attached - Type your message...` : "Type your message...")}
                       className="w-full bg-[#1A1A1A] border border-[#232323] rounded-xl px-6 py-4 pr-36 focus\:outline-none focus\:ring-2 focus\:ring-purple-500/50 focus\:border-purple-500 placeholder-gray-500 text-base disabled\:opacity-50 disabled\:cursor-not-allowed min-h-[60px] resize-none"
                     />
                     <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
-                      <button onClick={() => setShowFileUpload(true)} disabled={isThinking} className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative">
-                        <Upload className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                      </button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'})}><AtSign className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'})}><FileBox className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking} onClick={() => setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'})}><Bookmark className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" /></button>
-                      <button className="p-2 hover\:bg-[#232323] rounded-lg transition-colors group relative" disabled={isThinking || !input.trim()} onClick={async () => { 
-                        const currentInput = input.trim();
-                        if (!currentInput) return;
+                      {/* <button onClick={() => { if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; } setShowFileUpload(true); }} disabled={isThinking || !isSignedIn} className="p-2 hover\\:bg-[#232323] rounded-lg transition-colors group relative">
+                        <Upload className="h-5 w-5 text-gray-400 group-hover\\:text-white transition-colors" />
+                      </button> */}
+                      <button className="p-2 hover\\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => { if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; } setShowComingSoon({ isOpen: true, feature: 'Mentions', description: 'Mention and collaborate with team members directly in your conversations.'}); }}><AtSign className="h-5 w-5 text-gray-400 group-hover\\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => { if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; } setShowComingSoon({ isOpen: true, feature: 'Save Snippets', description: 'Save important parts of conversations for quick access later.'}); }}><FileBox className="h-5 w-5 text-gray-400 group-hover\\:text-white transition-colors" /></button>
+                      <button className="p-2 hover\\:bg-[#232323] rounded-lg transition-colors group" disabled={isThinking || !isSignedIn} onClick={() => { if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; } setShowComingSoon({ isOpen: true, feature: 'Bookmarks', description: 'Bookmark conversations and create custom collections.'}); }}><Bookmark className="h-5 w-5 text-gray-400 group-hover\\:text-white transition-colors" /></button>
+                      <button 
+                        className="p-2 hover\\:bg-[#232323] rounded-lg transition-colors group relative" 
+                        disabled={isThinking || !input.trim() || !isSignedIn} 
+                        onClick={async () => { 
+                          if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; }
+                          const currentInput = input.trim();
+                          if (!currentInput) return;
 
-                        const controller = new AbortController();
-                        setAbortController(controller);
-                        setIsThinking(true); 
-                        toast.loading('Enhancing prompt...', {
-                          id: 'enhance-toast',
-                          style: {
-                            background: '#1A1A1A',
-                            color: '#fff',
-                            border: '1px solid #232323',
-                          },
-                        });
-
-                        try {
-                          const response = await fetch('/api/enhance-prompt-groq', {
-                            method: 'POST',
-                            headers: {
-                              'Content-Type': 'application/json',
+                          const controller = new AbortController();
+                          setAbortController(controller);
+                          setIsThinking(true); 
+                          toast.loading('Enhancing prompt...', {
+                            id: 'enhance-toast',
+                            style: {
+                              background: '#1A1A1A',
+                              color: '#fff',
+                              border: '1px solid #232323',
                             },
-                            body: JSON.stringify({
-                              prompt: currentInput,
-                            }),
-                            signal: controller.signal,
                           });
 
-                          if (!response.ok) {
-                            const errorData = await response.json().catch(() => ({})); 
-                            throw new Error(errorData.error || errorData.details || 'Failed to enhance prompt');
-                          }
-
-                          const data = await response.json();
-                          const enhancedPrompt = data.enhancedPrompt;
-
-                          if (!enhancedPrompt) {
-                            throw new Error('No enhanced prompt returned from API');
-                          }
-                          setInput(enhancedPrompt); 
-                          toast.success('Prompt enhanced!', { id: 'enhance-toast' });
-                        } catch (error: any) {
-                          console.error('Error enhancing prompt:', error);
-                          if (error.name === 'AbortError') {
-                            toast.success('Enhancement stopped', {
-                              id: 'enhance-toast',
-                              icon: '🛑',
+                          try {
+                            const response = await fetch('/api/enhance-prompt-groq', {
+                              method: 'POST',
+                              headers: {
+                                'Content-Type': 'application/json',
+                              },
+                              body: JSON.stringify({
+                                prompt: currentInput,
+                              }),
+                              signal: controller.signal,
                             });
-                          } else {
-                            toast.error(error.message || 'Failed to enhance prompt', { id: 'enhance-toast' });
+
+                            if (!response.ok) {
+                              const errorData = await response.json().catch(() => ({})); 
+                              throw new Error(errorData.error || errorData.details || 'Failed to enhance prompt');
+                            }
+
+                            const data = await response.json();
+                            const enhancedPrompt = data.enhancedPrompt;
+
+                            if (!enhancedPrompt) {
+                              throw new Error('No enhanced prompt returned from API');
+                            }
+                            setInput(enhancedPrompt); 
+                            toast.success('Prompt enhanced!', { id: 'enhance-toast' });
+                          } catch (error: any) {
+                            console.error('Error enhancing prompt:', error);
+                            if (error.name === 'AbortError') {
+                              toast.success('Enhancement stopped', {
+                                id: 'enhance-toast',
+                                icon: '🛑',
+                              });
+                            } else {
+                              toast.error(error.message || 'Failed to enhance prompt', { id: 'enhance-toast' });
+                            }
+                          } finally {
+                            setIsThinking(false);
+                            setAbortController(null);
                           }
-                        } finally {
-                          setIsThinking(false);
-                          setAbortController(null);
-                        }
                        }}>
-                        <Sparkles className="h-5 w-5 text-gray-400 group-hover\:text-white transition-colors" />
-                         <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\:opacity-100 group-hover\:visible transition-all">
+                        <Sparkles className="h-5 w-5 text-gray-400 group-hover\\:text-white transition-colors" />
+                         <div className="absolute left-full ml-2 px-2 py-1 bg-[#232323] rounded text-xs whitespace-nowrap opacity-0 invisible group-hover\\:opacity-100 group-hover\\:visible transition-all">
                            Enhance Prompt
                          </div>
                       </button>
@@ -890,13 +901,27 @@ function App() {
 
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
-                      <button onClick={() => setShowModelSelect(true)} disabled={isThinking} className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group">
+                      <button 
+                        onClick={() => { 
+                          if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; } 
+                          setShowModelSelect(true); 
+                        }} 
+                        disabled={isThinking || !isSignedIn} 
+                        className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group"
+                      >
                         <Zap className="h-5 w-5 text-purple-400" />
                         <span className="text-sm font-medium">{models.find(m => m.id === selectedModel)?.name || 'Select Model'}</span>
                       </button>
                     </div>
-                    <button onClick={handleSend} disabled={isThinking || (!input.trim() && attachedFiles.length === 0)} className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group", isThinking ? "bg-[#232323] hover\:bg-[#2A2A2A]" : "bg-gradient-to-r from-purple-500 to-pink-500 hover\:from-purple-600 hover\:to-pink-600", "disabled\:opacity-50 disabled\:cursor-not-allowed")}>
-                      {isThinking ? (<div onClick={(e) => { e.stopPropagation(); handleStopGeneration();}} className="flex items-center gap-2"><span>Stop</span><X className="h-5 w-5" /></div>) : (<><span>Ask</span><Send className="h-5 w-5 transform transition-transform group-hover\:translate-x-0.5" /></>)}
+                    <button 
+                      onClick={() => { 
+                        if (!isSignedIn) { openSignIn({appearance: clerkModalAppearance}); return; }
+                        handleSend(); 
+                      }} 
+                      disabled={isThinking || (!input.trim() && attachedFiles.length === 0) || !isSignedIn} 
+                      className={cn("px-6 py-2.5 rounded-lg flex items-center gap-2 font-medium transition-all duration-200 group", (isThinking || !isSignedIn) ? "bg-[#232323] hover\\:bg-[#2A2A2A]" : "bg-gradient-to-r from-purple-500 to-pink-500 hover\\:from-purple-600 hover\\:to-pink-600", "disabled\\:opacity-50 disabled\\:cursor-not-allowed")}
+                    >
+                      {isThinking ? (<div onClick={(e) => { e.stopPropagation(); handleStopGeneration();}} className="flex items-center gap-2"><span>Stop</span><X className="h-5 w-5" /></div>) : (<><span>Ask</span><Send className="h-5 w-5 transform transition-transform group-hover\\:translate-x-0.5" /></>)}
                     </button>
                   </div>
                 </div>
