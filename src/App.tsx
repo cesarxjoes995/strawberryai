@@ -1018,39 +1018,45 @@ function App() {
                           const controller = new AbortController();
                           setAbortController(controller);
                           setIsThinking(true);
+                          toast.loading('Enhancing prompt...', { // Add loading toast
+                            id: 'enhance-toast',
+                            style: {
+                              background: '#1A1A1A',
+                              color: '#fff',
+                              border: '1px solid #232323',
+                            },
+                          });
 
                           try {
-                            const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+                            // Updated to call the new Netlify function for Groq
+                            const response = await fetch('/api/enhance-prompt-groq', {
                               method: 'POST',
                               headers: {
                                 'Content-Type': 'application/json',
-                                'Authorization': `Bearer ${import.meta.env.VITE_OPENROUTER_API_KEY}`,
-                                'Accept': 'application/json',
                               },
                               body: JSON.stringify({
-                                model: selectedModel,
-                                messages: [
-                                  {
-                                    role: 'system',
-                                    content: `You are a prompt enhancer. Your task is to improve the given prompt by adding relevant details and context. CRITICAL: Output ONLY the enhanced prompt text. Do not add any explanations, formatting, quotation marks, or additional text. Example input: "hi my name is simar" Example output: Hi, my name is Simar.`                                  },
-                                  {
-                                    role: 'user',
-                                    content: `${currentInput.trim()}`
-                                  }
-                                ],
+                                prompt: currentInput,
                               }),
                               signal: controller.signal,
                             });
 
-                            if (!response.ok) throw new Error('Failed to enhance prompt');
+                            if (!response.ok) {
+                              const errorData = await response.json().catch(() => ({}));
+                              throw new Error(errorData.error || 'Failed to enhance prompt');
+                            }
 
                             const data = await response.json();
-                            const enhancedPrompt = data.choices[0].message.content;
+                            const enhancedPrompt = data.enhancedPrompt;
+                            if (!enhancedPrompt) {
+                              throw new Error('No enhanced prompt returned from API');
+                            }
                             setInput(enhancedPrompt);
+                            toast.success('Prompt enhanced!', { id: 'enhance-toast' });
                           } catch (error: any) {
-                            console.error('Error:', error);
+                            console.error('Error enhancing prompt:', error);
                             if (error.name === 'AbortError') {
                               toast.success('Enhancement stopped', {
+                                id: 'enhance-toast',
                                 icon: '🛑',
                                 style: {
                                   background: '#1A1A1A',
@@ -1059,7 +1065,7 @@ function App() {
                                 },
                               });
                             } else {
-                              toast.error('Failed to enhance prompt');
+                              toast.error(error.message || 'Failed to enhance prompt', { id: 'enhance-toast' });
                             }
                           } finally {
                             setIsThinking(false);
@@ -1081,40 +1087,12 @@ function App() {
                       <button
                         onClick={() => setShowModelSelect(true)}
                         disabled={isThinking}
-                        className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover\:bg-[#232323] transition-all duration-200 group"
+                        className="flex items-center gap-2 bg-[#1A1A1A] px-4 py-2.5 rounded-lg border border-[#232323] hover:bg-[#232323] transition-all duration-200 group"
                       >
                         <Zap className="h-5 w-5 text-purple-400" />
                         <span className="text-sm font-medium">
                           {models.find(m => m.id === selectedModel)?.name || 'Select Model'}
                         </span>
-                      </button>
-
-                      <button
-                        onClick={() => {
-                          if (!isThinking && models.find(m => m.id === selectedModel)?.supportsLiveSearch) {
-                            setIsLiveSearch(!isLiveSearch);
-                          }
-                        }}
-                        className={cn(
-                          "flex items-center gap-2 px-4 py-2.5 rounded-lg border transition-all duration-200",
-                          models.find(m => m.id === selectedModel)?.supportsLiveSearch && !isThinking
-                            ? isLiveSearch
-                              ? 'bg-purple-500/20 border-purple-500/50 text-purple-400'
-                              : 'bg-[#1A1A1A] border-[#232323] hover\:bg-[#232323]'
-                            : 'bg-[#1A1A1A] border-[#232323] opacity-50 cursor-not-allowed',
-                          isThinking && 'opacity-50 cursor-not-allowed'
-                        )}
-                        disabled={isThinking || !models.find(m => m.id === selectedModel)?.supportsLiveSearch}
-                      >
-                        <Globe className={cn(
-                          "h-5 w-5",
-                          isLiveSearch ? 'text-purple-400' : 'text-gray-400 group-hover\:text-white'
-                        )}>
-                          {isLiveSearch && (
-                            <div className="absolute inset-0 bg-purple-400/20 rounded-full animate-ping" />
-                          )}
-                        </Globe>
-                        <span className="text-sm font-medium">Live Search</span>
                       </button>
                     </div>
 

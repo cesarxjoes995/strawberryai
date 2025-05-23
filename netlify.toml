@@ -17,6 +17,13 @@
   status = 200
   force = true
 
+# Redirect for Groq prompt enhancement function
+[[redirects]]
+  from = "/api/enhance-prompt-groq"
+  to = "/.netlify/functions/enhance-prompt-groq"
+  status = 200
+  force = true
+
 # SPA fallback
 [[redirects]]
   from = "/*"
