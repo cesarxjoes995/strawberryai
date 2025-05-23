@@ -38,13 +38,18 @@ export async function generateImage(prompt: string): Promise<Blob> {
     const data = await response.json();
     console.log('API Success Response:', data);
     
-    // Check if we have the image URL in the response
-    if (!data.imageUrl) {
+    // Extract URL from the correct location in the response
+    // The API returns { created: timestamp, data: [{ revised_prompt: string, url: string }] }
+    if (!data.data || !Array.isArray(data.data) || data.data.length === 0 || !data.data[0].url) {
+      console.error('Response format incorrect:', data);
       throw new Error('No image URL in response');
     }
     
+    const imageUrl = data.data[0].url;
+    console.log('Image URL extracted:', imageUrl);
+    
     // Fetch the image from the URL
-    const imageResponse = await fetch(data.imageUrl);
+    const imageResponse = await fetch(imageUrl);
     if (!imageResponse.ok) {
       throw new Error('Failed to fetch generated image');
     }
