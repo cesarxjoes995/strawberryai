@@ -33,7 +33,8 @@ const tools: Tool[] = [
     name: 'Document Analyzer',
     description: 'Extract insights from documents and files',
     icon: <FileText className="h-6 w-6 text-green-400" />,
-    component: DocumentAnalyzer
+    component: DocumentAnalyzer,
+    comingSoon: true
   },
   {
     id: 'research-assistant',
