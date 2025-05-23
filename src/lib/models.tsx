@@ -18,7 +18,6 @@ export interface Model {
 }
 
 const newModelNames = [
-  'Samurai Ai v2',
   'openai/gpt-4.1-mini',
   'rerank-shopify-v0',
   'qwen-plus-latest',
